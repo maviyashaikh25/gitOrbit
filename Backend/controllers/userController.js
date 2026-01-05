@@ -1,45 +1,46 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const { MongoClient } = require("mongodb");
+const User = require("../models/userModel");
 const dotenv = require("dotenv");
-var ObjectId = require("mongodb").ObjectId;
 
 dotenv.config();
-const uri = process.env.MONGO_URL;
 
-let client;
-
-async function connectClient() {
-  if (!client) {
-    client = new MongoClient(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    await client.connect();
-  }
-}
+// Using Mongoose models removes the need for explicit MongoClient connection management in controller
+// The connection is handled in index.js via mongoose.connect
 
 async function signup(req, res) {
   const { username, password, email } = req.body;
   try {
-    await connectClient();
-    const db = client.db("gitOrbit");
-    const users = db.collection("users");
-
-    if (await users.findOne({ username })) {
+    const existingUser = await User.findOne({ username });
+    if (existingUser) {
       return res.status(400).json({ message: "User already exists!" });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = { username, password: hashedPassword, email };
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+        return res.status(400).json({ message: "Email already exists!" });
+    }
 
-    const result = await users.insertOne(newUser);
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create new user using Mongoose model
+    const newUser = new User({ 
+        username, 
+        password: hashedPassword, 
+        email,
+        repositories: [],
+        followedUsers: [],
+        starRepos: []
+    });
+
+    const savedUser = await newUser.save();
+
     const token = jwt.sign(
-      { id: result.insertedId },
+      { id: savedUser._id },
       process.env.JWT_SECRET_KEY,
       { expiresIn: "1h" }
     );
-    res.json({ token, userId: result.insertedId });
+    res.json({ token, userId: savedUser._id });
   } catch (err) {
     console.error("Error during signup:", err.message);
     res.status(500).send("Server error");
@@ -49,11 +50,7 @@ async function signup(req, res) {
 async function login(req, res) {
   const { email, password } = req.body;
   try {
-    await connectClient();
-    const db = client.db("gitOrbit");
-    const usersCollection = db.collection("users");
-
-    const user = await usersCollection.findOne({ email });
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ message: "Invalid credentials!" });
     }
@@ -75,11 +72,7 @@ async function login(req, res) {
 
 async function getAllUsers(req, res) {
   try {
-    await connectClient();
-    const db = client.db("gitOrbit");
-    const usersCollection = db.collection("users");
-
-    const users = await usersCollection.find({}).toArray();
+    const users = await User.find({});
     res.json(users);
   } catch (err) {
     console.error("Error during fetching : ", err.message);
@@ -91,13 +84,12 @@ async function getUserProfile(req, res) {
   const currentID = req.params.id;
 
   try {
-    await connectClient();
-    const db = client.db("gitOrbit");
-    const usersCollection = db.collection("users");
-
-    const user = await usersCollection.findOne({
-      _id: new ObjectId(currentID),
-    });
+    // Populate useful fields for profile display
+    const user = await User.findById(currentID)
+        .populate('repositories')
+        .populate('followedUsers')
+        .populate('followers')
+        .populate('starRepos');
 
     if (!user) {
       return res.status(404).json({ message: "User not found!" });
@@ -112,32 +104,28 @@ async function getUserProfile(req, res) {
 
 async function updateUserProfile(req, res) {
   const currentID = req.params.id;
-  const { email, password } = req.body;
+  const { email, password, bio } = req.body;
 
   try {
-    await connectClient();
-    const db = client.db("gitOrbit");
-    const usersCollection = db.collection("users");
-
     let updateFields = { email };
+    if (bio) updateFields.bio = bio;
     if (password) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       updateFields.password = hashedPassword;
     }
 
-    const result = await usersCollection.findOneAndUpdate(
-      {
-        _id: new ObjectId(currentID),
-      },
-      { $set: updateFields },
-      { returnDocument: "after" }
+    const updatedUser = await User.findByIdAndUpdate(
+        currentID,
+        { $set: updateFields },
+        { new: true }
     );
-    if (!result.value) {
+
+    if (!updatedUser) {
       return res.status(404).json({ message: "User not found!" });
     }
 
-    res.send(result.value);
+    res.send(updatedUser);
   } catch (err) {
     console.error("Error during updating : ", err.message);
     res.status(500).send("Server error!");
@@ -148,15 +136,9 @@ async function deleteUserProfile(req, res) {
   const currentID = req.params.id;
 
   try {
-    await connectClient();
-    const db = client.db("gitOrbit");
-    const usersCollection = db.collection("users");
+    const result = await User.findByIdAndDelete(currentID);
 
-    const result = await usersCollection.deleteOne({
-      _id: new ObjectId(currentID),
-    });
-
-    if (result.deleteCount == 0) {
+    if (!result) {
       return res.status(404).json({ message: "User not found!" });
     }
 
@@ -167,6 +149,75 @@ async function deleteUserProfile(req, res) {
   }
 }
 
+async function followUser(req, res) {
+    const currentUserID = req.body.currentUserID; // The user who is following
+    const targetUserID = req.params.id; // The user to be followed
+
+    // Check if trying to follow self
+    if (currentUserID === targetUserID) {
+        return res.status(400).json({ message: "You cannot follow yourself" });
+    }
+
+    try {
+        const currentUser = await User.findById(currentUserID);
+        const targetUser = await User.findById(targetUserID);
+
+        if (!currentUser || !targetUser) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Check if already following
+        if (currentUser.followedUsers.includes(targetUserID)) {
+            return res.status(400).json({ message: "You are already following this user" });
+        }
+
+        // Add to followedUsers and followers lists
+        currentUser.followedUsers.push(targetUserID);
+        targetUser.followers.push(currentUserID);
+
+        await currentUser.save();
+        await targetUser.save();
+
+        res.json({ message: "User followed successfully!" });
+
+    } catch (err) {
+        console.error("Error during follow : ", err.message);
+        res.status(500).send("Server error!");
+    }
+}
+
+async function unfollowUser(req, res) {
+    const currentUserID = req.body.currentUserID; // The user who is unfollowing
+    const targetUserID = req.params.id; // The user to be unfollowed
+
+    try {
+        const currentUser = await User.findById(currentUserID);
+        const targetUser = await User.findById(targetUserID);
+
+        if (!currentUser || !targetUser) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Remove from followedUsers and followers lists
+        currentUser.followedUsers = currentUser.followedUsers.filter(
+            (id) => id.toString() !== targetUserID
+        );
+        targetUser.followers = targetUser.followers.filter(
+            (id) => id.toString() !== currentUserID
+        );
+
+        await currentUser.save();
+        await targetUser.save();
+
+        res.json({ message: "User unfollowed successfully!" });
+
+    } catch (err) {
+        console.error("Error during unfollow : ", err.message);
+        res.status(500).send("Server error!");
+    }
+}
+
+
 module.exports = {
   getAllUsers,
   signup,
@@ -174,4 +225,6 @@ module.exports = {
   getUserProfile,
   updateUserProfile,
   deleteUserProfile,
+  followUser,
+  unfollowUser
 };

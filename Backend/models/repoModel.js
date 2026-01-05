@@ -11,10 +11,24 @@ const RepositorySchema = new Schema(
     description: {
       type: String,
     },
+    language: {
+        type: String,
+        default: 'Plain Text'
+    },
     content: [
       {
-        type: String,
-      },
+        type: { type: String, enum: ['file', 'dir'], default: 'file' },
+        name: { type: String, required: true },
+        path: { type: String, required: true },
+        lastModified: { type: Date, default: Date.now }
+      }
+    ],
+    startgazers: [
+        {
+            type: Schema.Types.ObjectId,
+            ref: "User",
+            default: []
+        }
     ],
     visibility: {
       type: Boolean,

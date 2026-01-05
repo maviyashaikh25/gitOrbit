@@ -16,6 +16,10 @@ const UserSchema = new Schema(
     password: {
       type: String,
     },
+    bio: {
+        type: String,
+        default: ""
+    },
     repositories: [
       {
         type: Schema.Types.ObjectId,
@@ -24,6 +28,13 @@ const UserSchema = new Schema(
       },
     ],
     followedUsers: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        default: [],
+      },
+    ],
+    followers: [
       {
         type: Schema.Types.ObjectId,
         ref: "User",

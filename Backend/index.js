@@ -18,9 +18,23 @@ const { pullRepo } = require("./controllers/pull.js");
 const { revertChanges } = require("./controllers/revert.js");
 
 const mainRouter = require("./routes/main.router.js");
+// ...existing code...
 yargs(hideBin(process.argv))
   .command("start", "Starting the server", {}, startServer)
-  .command("init", "Initialise a new repository", {}, initRepo)
+  .command(
+    "init",
+    "Initialise a new repository",
+    (yargs) => {
+      yargs.option("name", {
+        describe: "Repository name",
+        type: "string",
+        demandOption: true,
+      });
+    },
+    (argv) => {
+      initRepo(argv);
+    }
+  )
   .command(
     "add <file>",
     "add file in a repository ",

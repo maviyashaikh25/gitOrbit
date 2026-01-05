@@ -1,10 +1,5 @@
 const AWS = require("aws-sdk");
 
-/*
-  Use environment variables for AWS credentials.
-  Load from .env (not committed to git for security).
-  Falls back to SDK default credential chain (IAM roles, CLI profiles, etc.).
-*/
 const awsConfig = { region: process.env.AWS_REGION || "ap-south-1" };
 
 if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
